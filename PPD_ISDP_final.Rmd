@@ -1,0 +1,729 @@
+---
+title: "PPD ISDP"
+author: "Elisa Ugarte"
+date: "7/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(arsenal)
+library(scales)
+library(pander)
+library(foreign)
+library(magrittr) 
+library(dplyr)    
+library(tidyr)
+library(psych)
+library(gridExtra)
+library(ggplot2)
+library(corrr)
+library(corrplot)
+library(ggpubr)
+library(modelr)
+library(effectsize)
+library(glmpath)
+library(glmnet)
+library(MASS)
+library(ggcorrplot)
+library(broom)
+library(ggfortify)
+library(relaimpo)
+library(olsrr)
+library(parameters)
+library(BayesFactor)
+library(codebook)
+library(labelled)
+library(PerformanceAnalytics)
+library(Hmisc)
+library(lavaan)
+#library(semPlot)
+library(rstatix)
+
+#setwd("C:\\Users\\eugarte\\Dropbox\\PhD\\Herd Lab\\Maternal Entropy RSA ISDP")
+setwd("/Users/elisa/Dropbox/PhD/Herd Lab/Maternal Entropy RSA ISDP")
+
+dat <- read.csv('07.06.21_FinalData.csv')
+#dat <- dat %>% group_by(ï..fid) %>% mutate(t2baseline = mean(c(f3mbvtf, f3vbvtf,f3qbvtf), na.rm = T ))
+dat <- dat %>% group_by(fid) %>% mutate(t2baseline = mean(c(f3mbvtf, f3vbvtf,f3qbvtf), na.rm = T ))
+#final <- dat %>% rename(fid = ï..fid, t1baseline = baseline)
+final <- dat %>% rename(t1baseline = baseline)
+final <- na_if(final, "NaN")
+
+hbq <- read.csv("hbq_t1.csv")
+final <- merge(final, hbq, by = "fid", all = T)
+final <- final[!(final$fid== 6933),]
+
+neo <- read.csv("F1 Neo 5 Clean.csv")
+#neo <- neo %>% rename(fid = ï..fid, neuro = f1neoneuro, conc = f1neocon) 
+neo <- neo %>% rename(neuro = f1neoneuro, conc = f1neocon) 
+neo <- neo[-c(3:5)]
+final <- merge(final, neo, by = "fid", all = T)
+
+final <- final[!(final$fid== 6933 |final$fid== 6935),]
+final$scl1depent <- final$scl1depent/100
+
+final <- final %>% rowwise() %>% mutate(physent=mean(c(hbqentph, hbqents), na.rm=T))
+final$physent <- final$physent/100
+
+dat <- final[c(1,5,7,8,14,21:23,38,51,53,55,62:67,87)]
+
+
+#final$scl1anxent <- final$scl1anxent/100
+#final$scl1hosent <- final$scl1hosent/100
+
+```
+
+## Vars of interest
+``` {r par3, include = T}
+corr_par <- 
+  final %>%
+   dplyr::select(
+    `dep entropy`= scl1depent,
+    `dep mean` = scl1dep,
+    `structure` = f1custructure,
+    `permisiveness` = f1cupermit,
+    `SES` = f1RRses,
+    `EP` = f1mextprb,
+    `IP`= f1mintprb,
+    `Vagal flexibility` = s,
+    `RSA neutral` = i)
+
+corr_par <- as.data.frame(corr_par)
+#corr_par <- corr_par[,-1]
+
+corPlot(corr_par, upper = F, diag = F, zlim = c(-0.9, 0.9), stars = T, cex = 1.1, pval=T,  
+       cuts=c(.001,.05), n.legend = 8, scale = F, ylas = 1, xlas = 2, main = "Correlations among variables of interest")
+
+
+```
+
+### Descriptives
+
+``` {r diag, echo = F}
+
+psych::describe(dat)
+
+#Mean centering for analysis
+dat$f1cagec <- dat$f1cage - mean(dat$f1cage, na.rm=T)
+dat$f1csexc <- dat$f1csex - mean(dat$f1csex, na.rm = T)
+dat$f1mextprbc <- dat$f1mextprb - mean(dat$f1mextprb, na.rm = T)
+dat$f1mintprbc <- dat$f1mintprb - mean(dat$f1mintprb, na.rm = T)
+dat$t1baselinec <- dat$t1baseline - mean(dat$t1baseline, na.rm = T)
+dat$f1custructurec  <- dat$f1custructure  - mean(dat$f1custructure , na.rm = T)
+dat$f1cuwarmc <- dat$f1cuwarm - mean(dat$f1cuwarm, na.rm = T)
+dat$f1cupermitc <- dat$f1cupermit - mean(dat$f1cupermit, na.rm = T)
+
+
+```
+
+### Convergent validity
+``` {r valid, echo = F}
+
+
+
+library(BayesFactor)
+library(bayestestR)
+
+#### CONVERGENT ####
+#Neuroticsm - expecting a positive correlation
+
+main_neuro <- correlationBF(final$scl1dep, final$neuro)
+describe_posterior(main_neuro)
+bayesfactor(main_neuro)
+
+ent_neuro <- correlationBF(final$scl1depent, final$neuro)
+describe_posterior(ent_neuro)
+bayesfactor(ent_neuro)
+
+# Conscientiousness - expecting a neg correlation
+main_conc <- correlationBF(final$scl1dep, final$conc)
+describe_posterior(main_conc)
+bayesfactor(main_conc)
+
+ent_conc <- correlationBF(final$scl1depent, final$conc)
+describe_posterior(ent_conc)
+bayesfactor(ent_conc)
+
+#### DIVERGENT ####
+
+# Entropy of a health and activities questionnaire
+main_phys <- correlationBF(final$scl1dep, final$physent)
+describe_posterior(main_phys)
+bayesfactor(main_phys)
+
+ent_phys <- correlationBF(final$scl1depent, final$physent)
+describe_posterior(ent_phys)
+bayesfactor(ent_phys)
+
+### PREDICTIVE ###
+
+#Internalizing problems
+main_int <- correlationBF(final$scl1dep, final$f1mintprb)
+describe_posterior(main_int)
+bayesfactor(main_int)
+
+ent_int <- correlationBF(final$scl1depent, final$f1mintprb)
+describe_posterior(ent_int)
+bayesfactor(ent_int)
+
+#Inhibitory control
+main_inc <- correlationBF(final$scl1dep, final$f1ctinc)
+describe_posterior(main_inc)
+bayesfactor(main_inc)
+
+ent_inc <- correlationBF(final$scl1depent, final$f1ctinc)
+describe_posterior(ent_inc)
+bayesfactor(ent_inc)
+
+#Validity correlation and plots
+
+valid <- 
+  final %>%
+   dplyr::select(
+    `dep entropy`= scl1depent,
+    `dep mean` = scl1dep,
+    `neuroticism` = neuro,
+    `Conscientiousness` = conc,
+    `HBQ entropy` = physent,
+    `Internalizing` = f1mintprb,
+    `Inhibitory control` = f1ctinc)
+
+corPlot(valid, upper = F, diag = F, zlim = c(-0.9, 0.9), stars = T, cex = 1.1, pval=T,  
+       cuts=c(.001,.05), n.legend = 8, scale = F, ylas = 1, xlas = 2, main = "Validity correlations (Pearson)")
+
+library(ggplot2)
+
+p1 <- final %>% 
+  ggplot(aes(scl1depent, neuro)) +
+  geom_point(size = 2, alpha = 1/2, colour = "darkgreen") +
+  geom_smooth(method = "lm", size = 1.5, color = "darkgreen") + # +
+  #ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Mood entropy",
+    y = "Neuroticism"
+  ) + theme(text = element_text(size=15)) 
+
+p2 <- final %>% 
+  ggplot(aes(scl1depent, conc)) +
+  geom_point(size = 2, alpha = 1/2, colour = "darkgreen") +
+  geom_smooth(method = "lm", size =1.5, color = "darkgreen") + # +
+  #ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Mood entropy",
+    y = "Conscientiousness"
+  ) + theme(text = element_text(size=15))
+
+p3 <- final %>% 
+  ggplot(aes(scl1depent, physent)) +
+  geom_point(size = 2, alpha = 1/2, colour = "red") +
+  geom_smooth(method = "lm", size = 1.5, color = "darkred") + # +
+  #ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Mood entropy",
+    y = "Health entropy"
+  ) + theme(text = element_text(size=15))
+
+p4 <- final %>% 
+  ggplot(aes(physent, neuro)) +
+  geom_point(size = 2, alpha = 1/2, colour = "red") +
+  geom_smooth(method = "lm", size = 1.5, color = "darkred") + # +
+  #ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Health entropy",
+    y = "Neuroticsm"
+  ) + theme(text = element_text(size=15))
+
+p5 <- final %>% 
+  ggplot(aes(scl1depent, f1mintprb)) +
+  geom_point(size = 2, alpha = 1/2, colour = "blue") +
+  geom_smooth(method = "lm", size = 1.5, color = "darkblue") + # +
+  #ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Mood entropy",
+    y = "Child internalizing problems"
+  ) + theme(text = element_text(size=15))
+
+p6 <- final %>% 
+  ggplot(aes(scl1depent, f1ctinc)) +
+  geom_point(size = 2, alpha = 1/2, colour = "blue") +
+  geom_smooth(method = "lm", size = 1.5, color = "darkblue") + # +
+  #ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Mood entropy",
+    y = "Child Inhibitory control"
+  ) + theme(text = element_text(size=15))
+
+library(gridExtra)
+p <- grid.arrange(p1, p2, nrow=1, ncol=2)
+a <- grid.arrange(p3,p4, nrow = 1, ncol=2)
+s <- grid.arrange(p5,p6, nrow = 1, ncol=2)
+
+
+```
+
+## RQ 1: Controlling for child baseline, intercept, sex, age, observed parenting, and mood levels
+## is maternal mood entropy related to children's Physio ( Reactivity (only at T1))
+
+##Controls
+
+``` {r q1, warnings = F}
+sm <- dat[c(1:12,15)]
+sm <- 
+  sm %>%
+  mutate(f1csex= f1csex-1) %>%
+  mutate(f1csex = as.factor(f1csex))
+contrasts(sm$f1csex) <- c(-.5, .5)
+
+d0_lm <-
+na.omit(sm)
+
+
+mod_0 <- lm(scale(s)~
+              1, data=d0_lm)
+
+mod_i<-
+  lm(
+    scale(s) ~
+      scale(i),
+    data = d0_lm
+  )
+anova(mod_0, mod_i)
+model_parameters(mod_i)
+
+mod_base<-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(t1baseline),
+    data = d0_lm
+  )
+anova(mod_i, mod_base)
+model_parameters(mod_base)
+
+#Not necessary to have baseline & i. Model with i fits better? But people are more familiar with baseline
+
+mod_age <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage),
+    data = d0_lm
+  )
+anova(mod_i, mod_age)
+model_parameters(mod_age)
+#Age is a significant covariate
+
+mod_sex <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage) + 
+      f1csex,
+    data = d0_lm
+  )
+anova(mod_age, mod_sex)
+model_parameters(mod_sex)
+
+#Sex is also relevant
+
+mod_ep <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage) + 
+      f1csex +
+      scale(f1mextprb),
+    data = d0_lm
+  )
+anova(mod_sex, mod_ep)
+model_parameters(mod_ep)
+
+mod_ip <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage) + 
+      f1csex +
+      scale(f1mintprb),
+    data = d0_lm
+  )
+anova(mod_sex, mod_ip)
+model_parameters(mod_ip)
+
+mod_ses <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage) + 
+      f1csex +
+      scale(f1RRses),
+    data = d0_lm
+  )
+anova(mod_sex, mod_ses)
+model_parameters(mod_ses)
+
+#EP is not related to slope but is related to entropy, leave it
+#SES is related to entropy, leave it 
+
+
+mod_str <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage) + 
+      f1csex +
+      scale(f1custructure),
+    data = d0_lm
+  )
+anova(mod_sex, mod_str)
+model_parameters(mod_str)
+
+mod_per <-
+  lm(
+    scale(s) ~
+      scale(i) +
+      scale(f1cage) + 
+      f1csex +
+      scale(f1cupermit),
+    data = d0_lm
+  )
+anova(mod_sex, mod_per)
+model_parameters(mod_per)
+
+#Parenting does not improve model fit
+
+```
+
+#SEM models using structure + permisiveness // MLR - bootstrap
+
+```{r sem, warning = F}
+
+#Main model
+
+model <- '
+s ~ f1csexc + f1cagec + i + f1RRses + f1cupermitc + f1custructurec + scl1dep + scl1depent + f1mextprbc
+f1cupermitc ~~ f1custructurec + 0*f1mextprbc
+scl1dep ~~ scl1depent + f1mextprbc
+scl1depent ~~ f1mextprbc
+f1csexc ~~ 0*f1cagec + f1RRses + 0*f1mextprbc 
+f1cagec ~~ 0*f1RRses  + f1mextprbc + f1custructure c
+f1RRses ~~  scl1dep + scl1depent + f1mextprbc
+f1RRses ~ 0*1  
+i ~ 0*1
+f1csexc ~ 0*1
+f1cagec ~ 0*1 
+f1cupermitc ~ 0*1 
+f1custructurec ~ 0*1
+'
+fit <- sem(model, data = dat, estimator = "MLR", missing = "FIML.x")
+summary(fit, standardized=T, fit.measures = T, rsquare=T, ci = T)
+
+
+
+
+```
+
+##Creating graphs
+
+```{r plots, warning=F}
+
+####
+
+library(modelr)
+library(ggplot2)
+
+bestcov <- lm(
+s ~ f1csexc + f1cagec + i + f1RRses + f1cupermitc + f1custructurec + scl1dep + f1mextprbc,
+  data = dat
+)
+
+dat <-
+  dat %>% 
+  add_residuals(bestcov, var = "resid_s")
+
+dat %>% 
+  ggplot(aes(scl1depent, resid_s)) +
+  geom_point(size = 4, alpha = 1/2, colour = "blue") +
+  geom_smooth(method = "lm", size = 2, color = "darkblue") + # +
+  ylim(-0.5,0.5)  +
+  #xlim(-0.5,0.5)  +
+  labs(
+    x = "Depression entropy",
+    y = "VF Slope (residuals)"
+  ) + theme(text = element_text(size=15))
+
+
+
+
+
+```
+
+
+## Extra 1: Entropy calculations
+
+```{r entropy, echo = T}
+
+scl1 <- read.csv("F1 PPD SCL-90.csv")
+
+#scl1 <- scl1 %>% rename(fid = ?..fid)
+
+scl1$VAR00001 <- NULL
+
+#Entropy function can be found in the Conte Center website
+
+entropy <- function(p){
+  iz <- which(p==0)
+  z <- -p * log2(p)
+  if (length(iz))
+    z[iz] <- 0
+  sum(z) }
+norm_entropy_E <-
+  function(x,E=0:4,minnum=floor(length(x)/2)){
+    if(sum(is.na(x)) > minnum) return(NA)
+    xf <- factor(x,levels=E)
+    p <- prop.table(table(xf))
+    k <- length(E)
+    nent <- 100*entropy(p)/log2(k)
+    nent
+  }
+
+
+####SCL 1 #####
+
+scl1 <- scl1[c(1,6,15,16,21,23,27,30:33,55,72,80,
+               3,18,24,34,40,58,73,79,81,87,
+               12,25,64,68,75,82,
+               2,5,13,28,41,43,49,50,53,54,57,59,
+               4,10,11,29,39,46,47,52,56,66,
+               7,22,35,37,38,42,62,70,74,
+               14,26,48,51,71,76,83,
+               9,19,44,69,77,84,
+               8,17,36,63,78,85,86,88,89,91)]
+
+
+scl1$scl1depent<- apply(scl1[,2:14],1,FUN=norm_entropy_E)
+scl1$scl1dep <- apply(scl1[,2:14], 1, mean, na.rm = T)
+corr.test(scl1$scl1depent, scl1$scl1dep)
+
+#write.table(scl, "scl_t1.csv", na=".", sep=",", col.names = T, row.names = F)
+
+#######HBQ#######
+entropy <- function(p){
+  iz <- which(p==0)
+  z <- -p * log2(p)
+  if (length(iz))
+    z[iz] <- 0
+  sum(z) }
+norm_entropy_E2 <-
+  function(x,E=0:2,minnum=floor(length(x)/2)){
+    if(sum(is.na(x)) > minnum) return(NA)
+    xf <- factor(x,levels=E)
+    p <- prop.table(table(xf))
+    k <- length(E)
+    nent <- 100*entropy(p)/log2(k)
+    nent
+  }
+
+entropy <- function(p){
+  iz <- which(p==0)
+  z <- -p * log2(p)
+  if (length(iz))
+    z[iz] <- 0
+  sum(z) }
+norm_entropy_E3 <-
+  function(x,E=0:3,minnum=floor(length(x)/2)){
+    if(sum(is.na(x)) > minnum) return(NA)
+    xf <- factor(x,levels=E)
+    p <- prop.table(table(xf))
+    k <- length(E)
+    nent <- 100*entropy(p)/log2(k)
+    nent
+  }
+
+## HBQ 4 yr old children (1/2 sample)
+
+hbq4 <- read.csv("F1 PPD hbq4.csv")
+hbq4 <- hbq4[c(1,3:7,9,10,190,14, 44,47,50)]
+hbq4$hbqentph <- apply(hbq4[,2:6],1,FUN=norm_entropy_E3)
+hbq4$hbqavgph <- apply(hbq4[,2:6], 1, mean, na.rm = T)
+hbq4$hbqents <- apply(hbq4[,11:13],1,FUN=norm_entropy_E2)
+hbq4$hbqavgs <- apply(hbq4[,11:13], 1, mean, na.rm = T)
+hbq4 <- hbq4[c(1,14:17)]
+library(rstatix)
+cor.mat <- cor_mat(hbq4)
+cor.mat
+cor.mat %>% cor_get_pval()
+cor.mat %>%
+  cor_reorder() %>%
+  pull_lower_triangle() %>%
+  cor_plot(label = TRUE)
+
+## HBQ 6 yr old children (1/2 sample)
+
+hbq6 <- read.csv("F1 PPD hbq6.csv")
+hbq6 <- hbq6[c(1,3:7,9,10,178,14,44,47,50)]
+hbq6$hbqentph <- apply(hbq6[,2:6],1,FUN=norm_entropy_E3)
+hbq6$hbqavgph <- apply(hbq6[,2:6], 1, mean, na.rm = T)
+hbq6$hbqents <- apply(hbq6[,11:13],1,FUN=norm_entropy_E2)
+hbq6$hbqavgs <- apply(hbq6[,11:13], 1, mean, na.rm = T)
+hbq6 <- hbq6[c(1,14:17)]
+library(rstatix)
+cor.mat <- cor_mat(hbq6)
+cor.mat
+cor.mat %>% cor_get_pval()
+cor.mat %>%
+  cor_reorder() %>%
+  pull_lower_triangle() %>%
+  cor_plot(label = TRUE)
+
+hbq <- rbind(hbq4,hbq6)
+#library(data.table)
+#write.table(hbq, "hbq_t1.csv", na=".", sep=",",row.names = F)
+
+```
+
+## Extra 2: Vagal flexibility
+
+``` {r vf, echo = T, warning =F}
+library(foreign)
+library(lavaan)
+library(psych)
+
+rsa.data = read.spss('f1 ppd cardio zudoc clean 02112020.sav', to.data.frame = TRUE)
+
+names(rsa.data)
+
+#Creating spaghetti plots
+fig <- rsa.data[c(1,5:16)]
+#fig$emo <- c('Sadness','Sadness','Sadness','Sadness','Fear','Fear', 'Fear', 'Fear', 'Anger','Anger','Anger',
+#'Anger')
+head(fig)
+library(tidyr)
+fig <- gather(fig, condition, RSA, f1za1vt:f1zt4vt, factor_key=FALSE)
+fig$emo <- NA
+fig$emo[fig$condition == "f1za1vt"] <- "Sadness"
+fig$emo[fig$condition == "f1za2vt"] <- "Sadness"
+fig$emo[fig$condition == "f1za3vt"] <- "Sadness"
+fig$emo[fig$condition == "f1za4vt"] <- "Sadness"
+
+fig$emo[fig$condition == "f1zm1vt"] <- "Fear"
+fig$emo[fig$condition == "f1zm2vt"] <- "Fear"
+fig$emo[fig$condition == "f1zm3vt"] <- "Fear"
+fig$emo[fig$condition == "f1zm4vt"] <- "Fear"
+
+fig$emo[fig$condition == "f1zt1vt"] <- "Anger"
+fig$emo[fig$condition == "f1zt2vt"] <- "Anger"
+fig$emo[fig$condition == "f1zt3vt"] <- "Anger"
+fig$emo[fig$condition == "f1zt4vt"] <- "Anger"
+
+
+fig$time <- NA
+fig$time[fig$condition == "f1za1vt"] <- "1"
+fig$time[fig$condition == "f1za2vt"] <- "2"
+fig$time[fig$condition == "f1za3vt"] <- "3"
+fig$time[fig$condition == "f1za4vt"] <- "4"
+
+fig$time[fig$condition == "f1zm1vt"] <- "1"
+fig$time[fig$condition == "f1zm2vt"] <- "2"
+fig$time[fig$condition == "f1zm3vt"] <- "3"
+fig$time[fig$condition == "f1zm4vt"] <- "4"
+
+fig$time[fig$condition == "f1zt1vt"] <- "1"
+fig$time[fig$condition == "f1zt2vt"] <- "2"
+fig$time[fig$condition == "f1zt3vt"] <- "3"
+fig$time[fig$condition == "f1zt4vt"] <- "4"
+
+library(ggplot2)
+
+fig$emo_f = factor(fig$emo, levels=c('Sadness','Fear','Anger'))
+fig$time <- as.numeric(fig$time)
+
+fmt_dcimals <- function(decimals=0){
+  function(x) format(x,nsmall = decimals,scientific = FALSE)
+}
+
+p <- ggplot(data = fig, aes(x = time, y = RSA,group = fid, colour = factor(fid)))
+p + geom_line() + stat_smooth(aes(group = 1), colour = "black") + stat_summary(aes(group = 1),
+ geom = "point", fun.y = mean, colour = "black", size = 4) + facet_grid(. ~ emo_f) + 
+  theme(legend.position="none") + scale_y_continuous(labels = fmt_dcimals(2), limits = c(3.40,9), expand = c(0, 0)) + 
+  scale_x_continuous(name="Epoch", limits = c(1,4), expand = c(0, 0)) +
+  theme(panel.background =  element_blank()) + theme(axis.text=element_text(size=12),axis.title=element_text(size=14)) +
+  theme(strip.text.x = element_text(size = 14, face = "bold"))
+
+#Modeling vagal flexibility
+vf.model <-'
+i1 =~ 1* f1za1vt + 1* f1za2vt + 1* f1za3vt + 1* f1za4vt
+s1 =~ 0* f1za1vt + -1*f1za2vt + f1za3vt + f1za4vt
+i2 =~ 1* f1zm1vt + 1* f1zm2vt + 1* f1zm3vt + 1* f1zm4vt
+s2 =~ 0* f1zm1vt + -1*f1zm2vt + f1zm3vt + f1zm4vt
+i3 =~ 1* f1zt1vt + 1* f1zt2vt + 1* f1zt3vt + 1* f1zt4vt
+s3 =~ 0* f1zt1vt + -1*f1zt2vt + f1zt3vt + f1zt4vt
+#residual variances
+f1za1vt~~r1*f1za1vt
+f1za2vt~~r1*f1za2vt
+f1za3vt~~r1*f1za3vt
+f1za4vt~~r1*f1za4vt
+#residual variances
+f1zm1vt~~r2*f1zm1vt
+f1zm2vt~~r2*f1zm2vt
+f1zm3vt~~r2*f1zm3vt
+f1zm4vt~~r2*f1zm4vt
+#residual variances
+f1zt1vt~~r3*f1zt1vt
+f1zt2vt~~0*f1zt2vt
+f1zt3vt~~r3*f1zt3vt
+f1zt4vt~~r3*f1zt4vt
+#second order growth factors
+i =~  i1 + i2 + i3
+s =~  1*s1 + 1*s2 + 1*s3
+#means
+i ~ 0
+s ~ 0
+i1~ 1
+i2~ 1
+i3~ 1
+s1~ 1
+s2~ 1
+s3~ 1
+#residual variances
+i1~~r*i1
+i2~~r*i2
+i3~~r*i3
+s1~~t*s1
+s2~~t*s2
+s3~~t*s3
+i ~~ i
+s ~~ s
+i ~~ s
+'
+vf.fit <- growth(vf.model, data = rsa.data, missing = 'FIMl')
+summary(vf.fit, fit.measures=TRUE, standardized=TRUE)
+fitmeasures(vf.fit) 
+
+
+head(lavPredict(vf.fit))
+
+#Creating new data set
+rsafinal = rsa.data[c("fid")]
+
+## merge factor scores to original data.frame
+fid <- lavInspect(vf.fit, "case.idx")
+fscores <- predict(vf.fit)
+## loop over factors
+for (fs in colnames(fscores)) {
+  rsafinal[fid, fs] <- fscores[ , fs]
+}
+head(rsafinal)
+names(rsafinal) <- c("fid", "isad", "sad", "ifear", "sfear", "ianger", "sanger", "i", "s" )
+head(rsafinal)
+
+```
+
